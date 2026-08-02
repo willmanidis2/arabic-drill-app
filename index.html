@@ -529,14 +529,17 @@ function next() {
   runCapstone(more ? () => start('due') : null);
 }
 
-function sessionDone(matchSecs) {
+function sessionDone(matchSecs, ladderMsg) {
   crankEnd = 0;
   $('done-line').textContent =
       'Done — ' + right + '/' + (right + wrong) + ' right';
   const due = SRS.dueCards(cards, state, new Date()).length;
   const tail = due > 0 ? due + ' more still due' : 'all caught up';
-  $('done-sub').textContent = matchSecs == null ? tail
-      : 'matched in ' + matchSecs + 's   ·   ' + tail;
+  const bits = [];
+  if (ladderMsg) bits.push(ladderMsg);
+  if (matchSecs != null) bits.push('matched in ' + matchSecs + 's');
+  bits.push(tail);
+  $('done-sub').textContent = bits.join('   ·   ');
   show('done');
 }
 
@@ -759,12 +762,37 @@ function checkGrid() {
   renderGrid();
 }
 
+/* Expanding rehearsal. Eight unknown pairs at once produces a wall of red and
+   teaches nothing, so the paradigm unlocks in steps: two persons, then four,
+   then all eight. Two consecutive clean rounds promote; a round where half or
+   more were fumbled drops back a step, so you cannot get stranded above your
+   level. The ladder is shared across all four pairings -- it tracks how much
+   of the paradigm you know, not how well you know one presentation of it. */
+const LADDER = [2, 4, 8];
+const LVL_KEY = 'paradigm:level';
+const CLEAN_KEY = 'paradigm:clean';
+
+function levelIdx() {
+  const n = Number(localStorage.getItem(LVL_KEY) || 0);
+  return Math.min(Math.max(n, 0), LADDER.length - 1);
+}
+function personsInPlay() {
+  return TBL.persons.slice(0, Math.min(LADDER[levelIdx()], TBL.persons.length));
+}
+function ladderNote() {
+  const size = personsInPlay().length;
+  if (size >= TBL.persons.length) return 'all ' + size;
+  const need = 2 - Number(localStorage.getItem(CLEAN_KEY) || 0);
+  return size + ' of ' + TBL.persons.length + '  ·  ' +
+         need + ' clean round' + (need === 1 ? '' : 's') + ' to unlock more';
+}
+
 /* Pick the pairing that covers the most paradigm cards actually due, so the
    coda does real scheduled work instead of rehearsing whatever came next in a
    rotation. Ties rotate, so the same pairing does not repeat back to back. */
 function capstonePick() {
   const nowIso = SRS.iso(new Date());
-  const dueIn = m => TBL.persons.reduce((n, p) => {
+  const dueIn = m => personsInPlay().reduce((n, p) => {
     const cid = sideCard(m.right, p.key) || sideCard(m.left, p.key);
     return n + (cid && SRS.entryFor(state, cid).due <= nowIso ? 1 : 0);
   }, 0);
@@ -802,7 +830,7 @@ function shuffled(arr) {
 function startMatch(i, opts) {
   opts = opts || {};
   const m = MATCHES[i];
-  const keys = TBL.persons.map(p => p.key);
+  const keys = personsInPlay().map(p => p.key);
   mgame = {
     m,
     left:  shuffled(keys.map(k => ({ key: k, text: sideText(m.left, k) }))),
@@ -832,7 +860,7 @@ function renderMatch() {
                                             : 'TAP A PAIR';
   $('m-skip').textContent = (mgame.capstone || mgame.after) ? 'Skip' : 'Back';
   $('m-title').textContent = m.title;
-  $('m-sub').textContent = m.note;
+  $('m-sub').textContent = m.note + '   ·   ' + ladderNote();
   for (const [side, boxId] of [['left', 'm-left'], ['right', 'm-right']]) {
     const box = $(boxId);
     box.innerHTML = '';
@@ -909,15 +937,46 @@ function finishMatch() {
   const record = clean === mgame.total && (!best || secs < best);
   if (record) localStorage.setItem(key, String(secs));
   const after = mgame.after, capstone = mgame.capstone;
+  const fumbles = mgame.missed.size, size = mgame.total;
+
+  let moved = null;
+  const lvl = levelIdx();
+  if (fumbles === 0) {
+    const streak = Number(localStorage.getItem(CLEAN_KEY) || 0) + 1;
+    if (streak >= 2 && lvl < LADDER.length - 1) {
+      localStorage.setItem(LVL_KEY, String(lvl + 1));
+      localStorage.setItem(CLEAN_KEY, '0');
+      moved = 'up';
+    } else {
+      localStorage.setItem(CLEAN_KEY, String(streak));
+    }
+  } else {
+    localStorage.setItem(CLEAN_KEY, '0');
+    // half the round fumbled means this step is above you -- step back down
+    // rather than leaving you to fail the same wall repeatedly.
+    if (fumbles * 2 >= size && lvl > 0) {
+      localStorage.setItem(LVL_KEY, String(lvl - 1));
+      moved = 'down';
+    }
+  }
+
   mgame = null;
   flushReviews();
 
+  const ladderMsg = moved === 'up'
+      ? 'Unlocked \u2014 now ' + LADDER[levelIdx()] + ' of ' + TBL.persons.length
+      : moved === 'down'
+        ? 'Back to ' + LADDER[levelIdx()] + ' for a bit'
+        : null;
+
   if (after) { after(); return; }              // crank: straight into the next set
-  if (capstone) { sessionDone(secs); return; } // coda to a finished set
-  $('done-line').textContent = 'Matched \u2014 ' + secs + 's';
-  $('done-sub').textContent = record ? 'clean sweep, new best'
-      : clean + '/' + mgame.total + ' with no fumble'
-        + (best ? '   ·   best ' + best + 's' : '');
+  if (capstone) { sessionDone(secs, ladderMsg); return; }
+  $('done-line').textContent = ladderMsg || ('Matched \u2014 ' + secs + 's');
+  $('done-sub').textContent = moved
+      ? secs + 's   ·   ' + clean + '/' + size + ' clean'
+      : (record ? 'clean sweep, new best'
+                : clean + '/' + size + ' with no fumble'
+                  + (best ? '   ·   best ' + best + 's' : ''));
   show('done');
 }
 

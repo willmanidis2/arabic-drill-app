@@ -86,6 +86,21 @@
   #g-foot{color:var(--muted);font-size:13px;text-align:center;min-height:18px;
           margin-bottom:9px}
   #tables{overflow-y:auto}
+  .mwrap{display:flex;gap:10px;flex:1;min-height:0}
+  .mcol{flex:1;display:flex;flex-direction:column;gap:8px}
+  .mcard{flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;
+         background:var(--row);border:1px solid var(--line);border-radius:11px;
+         font-size:15px;text-align:center;padding:6px 8px;line-height:1.15;
+         transition:opacity .18s,border-color .12s}
+  .mcard.sel{border-color:var(--blue);color:var(--blue)}
+  .mcard.bad{border-color:var(--red);color:var(--red)}
+  .mcard.hit{border-color:var(--green);color:var(--green)}
+  .mcard.gone{opacity:0;pointer-events:none;border-color:transparent}
+  #m-bar{flex:none;padding-top:10px;border-top:1px solid var(--line)}
+  #m-foot{color:var(--muted);font-size:13px;text-align:center;min-height:18px;
+          margin-bottom:9px}
+  .seclabel{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--dim);
+            margin:18px 0 8px}
   #setup a{color:var(--blue)}
 </style>
 </head>
@@ -159,6 +174,17 @@
     <div id="g-foot"></div>
     <button class="primary" id="g-check" onclick="checkGrid()">Check</button>
     <button onclick="openTables()">Give up</button>
+  </div>
+</div>
+
+<div id="match" class="screen">
+  <div class="kicker" id="m-kicker"></div>
+  <h1 id="m-title" style="font-size:22px;margin-top:6px"></h1>
+  <div class="sub" id="m-sub" style="margin-bottom:14px"></div>
+  <div class="mwrap"><div class="mcol" id="m-left"></div><div class="mcol" id="m-right"></div></div>
+  <div id="m-bar">
+    <div id="m-foot"></div>
+    <button onclick="leaveMatch()" id="m-skip">Back</button>
   </div>
 </div>
 
@@ -497,13 +523,35 @@ function next() {
   idx++;
   if (idx < queue.length) { render(); return; }
   flushReviews();
-  if (crankEnd && Date.now() < crankEnd - 20000) { start('due'); return; }
+  const more = crankEnd && Date.now() < crankEnd - 20000;
+  // Every set ends on the paradigm: retrieval practice with both sides
+  // shuffled, as a check that the system stuck and not just the cards.
+  runCapstone(more ? () => start('due') : null);
+}
+
+function sessionDone(matchSecs) {
   crankEnd = 0;
   $('done-line').textContent =
       'Done — ' + right + '/' + (right + wrong) + ' right';
   const due = SRS.dueCards(cards, state, new Date()).length;
-  $('done-sub').textContent = due > 0 ? due + ' more still due' : 'all caught up';
+  const tail = due > 0 ? due + ' more still due' : 'all caught up';
+  $('done-sub').textContent = matchSecs == null ? tail
+      : 'matched in ' + matchSecs + 's   ·   ' + tail;
   show('done');
+}
+
+async function runCapstone(after) {
+  try {
+    if (!TBL) {
+      const f = await getFile('tables.json');
+      if (f.text !== null) TBL = JSON.parse(f.text);
+    }
+  } catch (e) { /* offline -- the coda is optional, the session is not */ }
+  if (!TBL) { return after ? after() : sessionDone(null); }
+  // rotate so the same pairing does not come up every set
+  const n = (Number(localStorage.getItem('capstoneN') || 0) + 1) % MATCHES.length;
+  localStorage.setItem('capstoneN', String(n));
+  startMatch(n, { after: after, gradeOnlyDue: true });
 }
 
 /* ---------------------------- table game --------------------------------- */
@@ -526,17 +574,44 @@ async function openTables() {
 
   const box = $('tbl-list');
   box.innerHTML = '';
-  for (const t of TBL.tables) {
+  const heading = txt => {
+    const h = document.createElement('div');
+    h.className = 'seclabel';
+    h.textContent = txt;
+    box.appendChild(h);
+  };
+  const entry = (title, sub, fn) => {
     const b = document.createElement('button');
-    b.appendChild(document.createTextNode(t.title));
+    b.appendChild(document.createTextNode(title));
     const s = document.createElement('small');
-    s.textContent = t.subtitle;
+    s.textContent = sub;
     b.appendChild(s);
-    b.onclick = () => startTable(t.id);
+    b.onclick = fn;
     box.appendChild(b);
-  }
+  };
+
+  heading('FILL THE GRID  \u00b7  build the system');
+  for (const t of TBL.tables) entry(t.title, t.subtitle, () => startTable(t.id));
+
+  heading('MATCHING  \u00b7  both sides shuffled, no positional crutch');
+  MATCHES.forEach((m, i) => entry(m.title, m.note, () => startMatch(i)));
+
   show('tables');
 }
+
+/* Matching pairs. The grid keeps persons in canonical order, which means it can
+   be partly solved by position; here BOTH columns are shuffled every round, so
+   the only way through is the mapping itself. */
+const MATCHES = [
+  { left: 'person', right: 'pron',   title: 'Person \u2194 pronoun',
+    note: 'I \u2194 ana' },
+  { left: 'person', right: 'ending', title: 'Person \u2194 ending',
+    note: 'I \u2194 -i' },
+  { left: 'pron',   right: 'ending', title: 'Pronoun \u2194 ending',
+    note: 'ana \u2194 -i, no English at all' },
+  { left: 'person', right: 'book',   title: 'Person \u2194 \u201c\u2026 book\u201d',
+    note: 'I \u2194 ktaabi' },
+];
 
 function paradigm(key) { return TBL.paradigms.find(p => p.key === key); }
 
@@ -685,6 +760,159 @@ function checkGrid() {
   game.msg = wrongCount + (wrongCount === 1 ? ' is' : ' are') +
              ' wrong — try those again';
   renderGrid();
+}
+
+/* ---------------------------- matching game ------------------------------ */
+
+let mgame = null;
+let mtimer = null;
+
+function sideText(which, personKey) {
+  if (which === 'person') return TBL.persons.find(p => p.key === personKey).label;
+  return paradigm(which).cells[personKey].form;
+}
+function sideCard(which, personKey) {
+  return which === 'person' ? null : paradigm(which).cells[personKey].cardId;
+}
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function startMatch(i, opts) {
+  opts = opts || {};
+  const m = MATCHES[i];
+  const keys = TBL.persons.map(p => p.key);
+  mgame = {
+    m,
+    left:  shuffled(keys.map(k => ({ key: k, text: sideText(m.left, k) }))),
+    right: shuffled(keys.map(k => ({ key: k, text: sideText(m.right, k) }))),
+    sel: null, done: new Set(), missed: new Set(), graded: new Set(),
+    total: keys.length, started: Date.now(), busy: false,
+    after: opts.after || null,
+    capstone: !!opts.gradeOnlyDue,
+    gradeOnlyDue: !!opts.gradeOnlyDue,
+  };
+  clearInterval(mtimer);
+  mtimer = setInterval(renderMatchFoot, 500);
+  renderMatch();
+  show('match');
+}
+
+function renderMatchFoot() {
+  if (!mgame) return;
+  const secs = Math.floor((Date.now() - mgame.started) / 1000);
+  $('m-foot').textContent = mgame.done.size + ' of ' + mgame.total +
+      '   \u00b7   ' + secs + 's';
+}
+
+function renderMatch() {
+  const m = mgame.m;
+  $('m-kicker').textContent = mgame.capstone ? 'TO FINISH \u2014 TAP A PAIR'
+                                            : 'TAP A PAIR';
+  $('m-skip').textContent = (mgame.capstone || mgame.after) ? 'Skip' : 'Back';
+  $('m-title').textContent = m.title;
+  $('m-sub').textContent = m.note;
+  for (const [side, boxId] of [['left', 'm-left'], ['right', 'm-right']]) {
+    const box = $(boxId);
+    box.innerHTML = '';
+    for (const item of mgame[side]) {
+      const el = document.createElement('div');
+      el.className = 'mcard';
+      el.textContent = item.text;
+      if (mgame.done.has(item.key)) el.classList.add('gone');
+      if (mgame.sel && mgame.sel.side === side && mgame.sel.key === item.key) {
+        el.classList.add('sel');
+      }
+      if (mgame.flash && mgame.flash.indexOf(side + ':' + item.key) >= 0) {
+        el.classList.add(mgame.flashOk ? 'hit' : 'bad');
+      }
+      el.onclick = () => tapMatch(side, item.key);
+      box.appendChild(el);
+    }
+  }
+  renderMatchFoot();
+}
+
+function tapMatch(side, key) {
+  if (mgame.busy || mgame.done.has(key)) return;
+  const sel = mgame.sel;
+  if (!sel || sel.side === side) {          // first pick, or switching sides
+    mgame.sel = (sel && sel.side === side && sel.key === key) ? null : { side, key };
+    renderMatch();
+    return;
+  }
+
+  const hit = sel.key === key;
+  mgame.flash = [sel.side + ':' + sel.key, side + ':' + key];
+  mgame.flashOk = hit;
+  mgame.busy = true;
+  renderMatch();
+
+  if (navigator.vibrate) navigator.vibrate(hit ? 10 : [30, 40, 30]);
+
+  if (hit) {
+    // Grade once per pair, and only as correct if it was never fumbled.
+    if (!mgame.graded.has(key)) {
+      mgame.graded.add(key);
+      const cid = sideCard(mgame.m.right, key) || sideCard(mgame.m.left, key);
+      const card = cid && cards.find(c => c.id === cid);
+      // A capstone runs after EVERY set, so grading it unconditionally would
+      // review these 16 cards far more often than the rest of the deck and
+      // skew the schedule. Only record what was genuinely due.
+      const due = card && SRS.entryFor(state, card.id).due <= SRS.iso(new Date());
+      if (card && (!mgame.gradeOnlyDue || due)) {
+        commitLocal(card, !mgame.missed.has(key));
+      }
+    }
+  } else {
+    // The first tap is the cue being resolved, so that is the one missed.
+    mgame.missed.add(sel.key);
+  }
+
+  setTimeout(() => {
+    if (hit) mgame.done.add(key);
+    mgame.flash = null;
+    mgame.sel = null;
+    mgame.busy = false;
+    if (mgame.done.size === mgame.total) return finishMatch();
+    renderMatch();
+  }, hit ? 140 : 320);   // input is ignored while this plays -- keep it short
+}
+
+function finishMatch() {
+  clearInterval(mtimer);
+  const secs = Math.round((Date.now() - mgame.started) / 1000);
+  const clean = mgame.total - mgame.missed.size;
+  const key = 'best:' + mgame.m.title;
+  const best = Number(localStorage.getItem(key) || 0);
+  const record = clean === mgame.total && (!best || secs < best);
+  if (record) localStorage.setItem(key, String(secs));
+  const after = mgame.after, capstone = mgame.capstone;
+  mgame = null;
+  flushReviews();
+
+  if (after) { after(); return; }              // crank: straight into the next set
+  if (capstone) { sessionDone(secs); return; } // coda to a finished set
+  $('done-line').textContent = 'Matched \u2014 ' + secs + 's';
+  $('done-sub').textContent = record ? 'clean sweep, new best'
+      : clean + '/' + mgame.total + ' with no fumble'
+        + (best ? '   ·   best ' + best + 's' : '');
+  show('done');
+}
+
+// The capstone is a coda, not a gate -- always leave a way past it.
+function leaveMatch() {
+  clearInterval(mtimer);
+  const g = mgame;
+  mgame = null;
+  if (g && g.after) { g.after(); return; }
+  if (g && g.capstone) { sessionDone(null); return; }
+  openTables();
 }
 
 /* ------------------------------- push ----------------------------------- */

@@ -75,10 +75,17 @@
   .slot.bad{border-color:var(--red);color:var(--red)}
   .tray{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;
         padding-top:14px;border-top:1px solid var(--line)}
-  .tile{background:var(--row);border:1px solid var(--line);border-radius:10px;
+  .gtile{background:var(--row);border:1px solid var(--line);border-radius:10px;
         padding:10px 13px;font-size:15px}
-  .tile.sel{border-color:var(--blue);color:var(--blue)}
-  .tile.gone{opacity:0;pointer-events:none}
+  .gtile.sel{border-color:var(--blue);color:var(--blue)}
+  .gtile.gone{opacity:0;pointer-events:none}
+  #g-scroll{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+            padding-bottom:8px}
+  #g-bar{flex:none;padding-top:10px;border-top:1px solid var(--line);
+         background:var(--bg)}
+  #g-foot{color:var(--muted);font-size:13px;text-align:center;min-height:18px;
+          margin-bottom:9px}
+  #tables{overflow-y:auto}
   #setup a{color:var(--blue)}
 </style>
 </head>
@@ -138,16 +145,21 @@
 </div>
 
 <div id="grid" class="screen">
-  <div class="kicker" id="g-kicker"></div>
-  <h1 id="g-title" style="font-size:23px;margin-top:6px"></h1>
-  <div class="sub" id="g-sub" style="margin-bottom:16px"></div>
-  <div class="thead" id="g-head"></div>
-  <div id="g-rows"></div>
-  <div class="tray" id="g-tray"></div>
-  <div id="g-foot" style="margin:auto 0 10px;padding-top:14px;color:var(--muted);
-       font-size:13px;text-align:center;min-height:20px"></div>
-  <button class="primary" id="g-check" onclick="checkGrid()">Check</button>
-  <button onclick="openTables()">Give up</button>
+  <!-- body is overflow:hidden, so the grid needs its own scroller or the tray
+       and the Check button fall off the bottom of a three-column table. -->
+  <div id="g-scroll">
+    <div class="kicker" id="g-kicker"></div>
+    <h1 id="g-title" style="font-size:23px;margin-top:6px"></h1>
+    <div class="sub" id="g-sub" style="margin-bottom:16px"></div>
+    <div class="thead" id="g-head"></div>
+    <div id="g-rows"></div>
+    <div class="tray" id="g-tray"></div>
+  </div>
+  <div id="g-bar">
+    <div id="g-foot"></div>
+    <button class="primary" id="g-check" onclick="checkGrid()">Check</button>
+    <button onclick="openTables()">Give up</button>
+  </div>
 </div>
 
 <div id="done" class="screen">
@@ -594,7 +606,7 @@ function renderGrid() {
   const used = new Set(Object.values(game.placed).map(p => p.col + ':' + p.form));
   for (const tile of game.tiles) {
     const el = document.createElement('div');
-    el.className = 'tile';
+    el.className = 'gtile';
     el.textContent = tile.form;
     if (used.has(tile.col + ':' + tile.form)) { el.classList.add('gone'); }
     if (game.sel === tile) el.classList.add('sel');

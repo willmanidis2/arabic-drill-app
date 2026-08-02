@@ -172,6 +172,39 @@ async function getFile(name) {
   const j = await r.json();
   return { text: dec(j.content), sha: j.sha };
 }
+
+// A fine-grained token with the wrong scope gets 404, not 403 -- GitHub hides
+// private repos rather than admit they exist. So a bare 404 is ambiguous
+// between "no access" and "no such file". Probe the repo itself to turn it
+// into something the user can actually act on.
+async function preflight() {
+  let r;
+  try {
+    r = await gh('/repos/' + CFG.owner + '/' + CFG.repo);
+  } catch (e) {
+    throw new Error('Cannot reach GitHub. Check the connection.');
+  }
+  if (r.status === 401) {
+    throw new Error('GitHub rejected the token. Paste the whole value \u2014 ' +
+        'it starts with github_pat_ and is one long line with no spaces.');
+  }
+  if (r.status === 404) {
+    throw new Error('That token cannot see ' + CFG.owner + '/' + CFG.repo +
+        '. Edit the token: Repository access \u2192 Only select repositories ' +
+        '\u2192 ' + CFG.repo + ', and Permissions \u2192 Contents: ' +
+        'Read and write.');
+  }
+  if (r.status === 403) {
+    throw new Error('Token blocked (403) \u2014 it may be pending approval, ' +
+        'or hit a rate limit.');
+  }
+  if (!r.ok) throw new Error('GitHub error ' + r.status);
+  const j = await r.json();
+  if (j.permissions && j.permissions.push === false) {
+    throw new Error('Token is read-only, so progress could never be saved. ' +
+        'Set Permissions \u2192 Contents: Read and write.');
+  }
+}
 async function putFile(name, text, sha, message) {
   const body = { message: message || ('phone: update ' + name), content: enc(text) };
   if (sha) body.sha = sha;
@@ -229,12 +262,25 @@ async function loadAll() {
     state = JSON.parse(localStorage.getItem('cachedState') || '{}');
   }
   try {
+    await preflight();
     const [c, s, rv, rp] = await Promise.all([
       getFile('cards.json'), getFile('state.json'),
       getFile('reviews.jsonl'), getFile('reviews-phone.jsonl')]);
-    cards = JSON.parse(c.text);
+    if (c.text === null) {
+      throw new Error('cards.json is missing from ' + CFG.repo + '.');
+    }
+    try {
+      cards = JSON.parse(c.text);
+    } catch (err) {
+      throw new Error('cards.json in the repo is not valid JSON.');
+    }
+    // A corrupt remote state must never brick the app -- fall back to local.
+    let remoteState = {};
+    if (s.text) {
+      try { remoteState = JSON.parse(s.text); } catch (err) { remoteState = {}; }
+    }
     state = SRS.mergeState(JSON.parse(localStorage.getItem('cachedState') || '{}'),
-                           JSON.parse(s.text || '{}'));
+                           remoteState);
     stateSha = s.sha;
     localStorage.setItem('cachedCards', c.text);
     localStorage.setItem('cachedState', JSON.stringify(state));
@@ -253,7 +299,7 @@ async function loadAll() {
     status('');
     return true;
   } catch (e) {
-    if (!cards.length) throw e;
+    if (!cards || !cards.length) throw e;
     status('offline — using cached deck', true);
     return false;
   }

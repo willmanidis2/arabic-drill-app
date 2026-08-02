@@ -2,7 +2,7 @@
 // offline, from the last sync), and turns Web Push messages from the Mac
 // into native notifications.
 'use strict';
-const CACHE = 'arabic-v1';
+const CACHE = 'arabic-v2';
 const SHELL = ['./', './index.html', './srs.js', './config.json',
                './manifest.webmanifest', './icon-180.png', './icon-512.png'];
 

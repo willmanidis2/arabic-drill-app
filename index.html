@@ -347,16 +347,20 @@ function renderHome() {
   // there and explain the missing step when running in plain Safari.
   const installed = window.navigator.standalone === true ||
       window.matchMedia('(display-mode: standalone)').matches;
-  const canPush = 'Notification' in window && 'serviceWorker' in navigator &&
-      'PushManager' in window;
   const b = $('b-notif');
-  if (canPush && Notification.permission === 'default') {
+  if (!installed) {
+    // iOS exposes the Push API ONLY to Home Screen web apps -- window.PushManager
+    // is undefined in a plain Safari tab. Feature-detecting first would hide the
+    // button and leave no clue, so check install state first and say why.
     b.style.display = '';
-    b.disabled = !installed;
-    b.innerHTML = installed
-        ? 'Enable notifications'
-        : 'Notifications<small>Share \u2192 Add to Home Screen first, ' +
-          'then open it from there</small>';
+    b.disabled = true;
+    b.innerHTML = 'Notifications<small>Share \u2192 Add to Home Screen, ' +
+        'then open it from there</small>';
+  } else if ('Notification' in window && 'serviceWorker' in navigator &&
+             'PushManager' in window && Notification.permission === 'default') {
+    b.style.display = '';
+    b.disabled = false;
+    b.innerHTML = 'Enable notifications';
   } else {
     b.style.display = 'none';
   }

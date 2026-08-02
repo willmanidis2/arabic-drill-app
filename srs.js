@@ -78,6 +78,11 @@ const SRS = {
 
   baseOf(id) { return id.slice(0, id.lastIndexOf(':')); },
 
+  // Cards tagged deliver:"table" are a paradigm the grid and the matching
+  // round teach as a system. They keep their schedule and their history --
+  // they are just never handed out as isolated multiple-choice.
+  drillable(cards) { return cards.filter(c => c.deliver !== 'table'); },
+
   preferredDir(base) {
     let s = 0;
     for (const ch of base) s += ch.codePointAt(0);
@@ -87,7 +92,7 @@ const SRS = {
   dueCards(cards, state, now) {
     const nowIso = SRS.iso(now);
     const out = [];
-    for (const c of cards) {
+    for (const c of SRS.drillable(cards)) {
       const e = SRS.entryFor(state, c.id);
       if (e.due <= nowIso) out.push([c, e]);
     }
@@ -191,6 +196,7 @@ const SRS = {
 
   selectQueue(cards, state, mode, now) {
     now = now || new Date();
+    cards = SRS.drillable(cards);
     if (mode === 'due') return SRS.orderQueue(SRS.dueCards(cards, state, now));
 
     let pool;

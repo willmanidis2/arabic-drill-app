@@ -548,10 +548,7 @@ async function runCapstone(after) {
     }
   } catch (e) { /* offline -- the coda is optional, the session is not */ }
   if (!TBL) { return after ? after() : sessionDone(null); }
-  // rotate so the same pairing does not come up every set
-  const n = (Number(localStorage.getItem('capstoneN') || 0) + 1) % MATCHES.length;
-  localStorage.setItem('capstoneN', String(n));
-  startMatch(n, { after: after, gradeOnlyDue: true });
+  startMatch(capstonePick(), { after: after, gradeOnlyDue: true });
 }
 
 /* ---------------------------- table game --------------------------------- */
@@ -760,6 +757,25 @@ function checkGrid() {
   game.msg = wrongCount + (wrongCount === 1 ? ' is' : ' are') +
              ' wrong — try those again';
   renderGrid();
+}
+
+/* Pick the pairing that covers the most paradigm cards actually due, so the
+   coda does real scheduled work instead of rehearsing whatever came next in a
+   rotation. Ties rotate, so the same pairing does not repeat back to back. */
+function capstonePick() {
+  const nowIso = SRS.iso(new Date());
+  const dueIn = m => TBL.persons.reduce((n, p) => {
+    const cid = sideCard(m.right, p.key) || sideCard(m.left, p.key);
+    return n + (cid && SRS.entryFor(state, cid).due <= nowIso ? 1 : 0);
+  }, 0);
+  const scored = MATCHES.map((m, i) => ({ i, n: dueIn(m) }));
+  const best = Math.max.apply(null, scored.map(s => s.n));
+  const pool = scored.filter(s => s.n === best).map(s => s.i);
+  const last = Number(localStorage.getItem('capstoneN'));
+  const next = pool.find(i => i !== last);
+  const pick = next === undefined ? pool[0] : next;
+  localStorage.setItem('capstoneN', String(pick));
+  return pick;
 }
 
 /* ---------------------------- matching game ------------------------------ */

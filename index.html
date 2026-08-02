@@ -60,6 +60,25 @@
            border-radius:12px;padding:12px;font:14px ui-monospace,monospace;min-height:84px;
            margin:14px 0}
   #setup p{color:var(--muted);font-size:14px;line-height:1.5;margin-top:12px}
+  .thead{display:flex;gap:7px;margin:0 0 6px 84px}
+  .thead span{flex:1;font-size:10px;font-weight:600;letter-spacing:.06em;
+              color:var(--dim);text-align:center}
+  .trow{display:flex;align-items:stretch;gap:7px;margin-bottom:7px}
+  .tlabel{width:78px;flex:none;display:flex;align-items:center;justify-content:flex-end;
+          font-size:12px;color:var(--muted);text-align:right;line-height:1.15}
+  .slot{flex:1;min-height:42px;border:1px dashed var(--line);border-radius:10px;
+        display:flex;align-items:center;justify-content:center;font-size:15px;
+        color:var(--fg);padding:2px 4px;text-align:center}
+  .slot.filled{border-style:solid;background:var(--row)}
+  .slot.sel{border-color:var(--blue)}
+  .slot.ok{border-color:var(--green);color:var(--green);background:transparent}
+  .slot.bad{border-color:var(--red);color:var(--red)}
+  .tray{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;
+        padding-top:14px;border-top:1px solid var(--line)}
+  .tile{background:var(--row);border:1px solid var(--line);border-radius:10px;
+        padding:10px 13px;font-size:15px}
+  .tile.sel{border-color:var(--blue);color:var(--blue)}
+  .tile.gone{opacity:0;pointer-events:none}
   #setup a{color:var(--blue)}
 </style>
 </head>
@@ -98,6 +117,7 @@
     <button onclick="start('lesson')">Latest batch</button>
     <button onclick="start('all')">Practice</button>
   </div>
+  <button onclick="openTables()">Tables<small>pronouns and endings, as a grid</small></button>
   <button id="b-notif" onclick="enablePush()" style="display:none">Enable notifications</button>
   <div class="status" id="h-status"></div>
 </div>
@@ -107,6 +127,27 @@
   <div id="prompt"></div>
   <div class="opts" id="opts"></div>
   <div id="foot"></div>
+</div>
+
+<div id="tables" class="screen">
+  <div class="kicker">PARADIGM TABLES</div>
+  <h1 style="font-size:26px">Fill the grid</h1>
+  <div class="sub">Place every tile, then check. The alignment is the lesson.</div>
+  <div id="tbl-list" style="margin-top:20px"></div>
+  <button onclick="goHome()">Back</button>
+</div>
+
+<div id="grid" class="screen">
+  <div class="kicker" id="g-kicker"></div>
+  <h1 id="g-title" style="font-size:23px;margin-top:6px"></h1>
+  <div class="sub" id="g-sub" style="margin-bottom:16px"></div>
+  <div class="thead" id="g-head"></div>
+  <div id="g-rows"></div>
+  <div class="tray" id="g-tray"></div>
+  <div id="g-foot" style="margin:auto 0 10px;padding-top:14px;color:var(--muted);
+       font-size:13px;text-align:center;min-height:20px"></div>
+  <button class="primary" id="g-check" onclick="checkGrid()">Check</button>
+  <button onclick="openTables()">Give up</button>
 </div>
 
 <div id="done" class="screen">
@@ -423,6 +464,14 @@ function pick(el, opt, c) {
   if (ok) right++; else wrong++;
   if (navigator.vibrate) navigator.vibrate(ok ? 10 : [30, 40, 30]);
 
+  commitLocal(c, ok);
+  setTimeout(next, ok ? 1000 : 2100);
+}
+
+// The single local write path: grade, cache, queue the history line, sync.
+// Both the card drill and the table game go through here so they can never
+// drift apart in how they touch the schedule.
+function commitLocal(c, ok) {
   const now = new Date();
   state[c.id] = SRS.grade(SRS.entryFor(state, c.id), ok, now);
   localStorage.setItem('cachedState', JSON.stringify(state));
@@ -430,8 +479,6 @@ function pick(el, opt, c) {
     ts: SRS.iso(now), id: c.id, correct: ok, cat: c.cat, dir: c.dir }));
   localStorage.setItem('pendingReviews', JSON.stringify(pendingReviews));
   pushState();
-
-  setTimeout(next, ok ? 1000 : 2100);
 }
 
 function next() {
@@ -445,6 +492,187 @@ function next() {
   const due = SRS.dueCards(cards, state, new Date()).length;
   $('done-sub').textContent = due > 0 ? due + ' more still due' : 'all caught up';
   show('done');
+}
+
+/* ---------------------------- table game --------------------------------- */
+/* A paradigm is a system, not eight unrelated facts. Placing the whole grid at
+   once forces you to reason across persons instead of recognising one form in
+   isolation. Only the FIRST check touches the schedule -- retries are for
+   learning, and grading them would inflate the deck. */
+
+let TBL = null;      // tables.json
+let game = null;
+
+async function openTables() {
+  try {
+    if (!TBL) {
+      const f = await getFile('tables.json');
+      if (f.text === null) { status('tables.json is not in the repo yet.'); return; }
+      TBL = JSON.parse(f.text);
+    }
+  } catch (e) { status('could not load tables: ' + e.message, true); return; }
+
+  const box = $('tbl-list');
+  box.innerHTML = '';
+  for (const t of TBL.tables) {
+    const b = document.createElement('button');
+    b.appendChild(document.createTextNode(t.title));
+    const s = document.createElement('small');
+    s.textContent = t.subtitle;
+    b.appendChild(s);
+    b.onclick = () => startTable(t.id);
+    box.appendChild(b);
+  }
+  show('tables');
+}
+
+function paradigm(key) { return TBL.paradigms.find(p => p.key === key); }
+
+function startTable(id) {
+  const t = TBL.tables.find(x => x.id === id);
+  const tiles = [];
+  for (const col of t.columns) {
+    const par = paradigm(col);
+    for (const person of TBL.persons) {
+      const cell = par.cells[person.key];
+      tiles.push({ col, person: person.key, form: cell.form, cardId: cell.cardId });
+    }
+  }
+  for (let i = tiles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+  }
+  game = { table: t, tiles, placed: {}, locked: {}, sel: null, attempt: 0,
+           firstTry: 0, total: tiles.length };
+  renderGrid();
+  show('grid');
+}
+
+const cellKey = (person, col) => person + '/' + col;
+
+function renderGrid() {
+  const t = game.table;
+  $('g-kicker').textContent = t.columns.length > 1 ? 'MATCH ACROSS COLUMNS'
+                                                   : 'MATCH EACH PERSON';
+  $('g-title').textContent = t.title;
+  $('g-sub').textContent = t.subtitle;
+
+  const head = $('g-head');
+  head.innerHTML = '';
+  for (const col of t.columns) {
+    const sp = document.createElement('span');
+    sp.textContent = paradigm(col).label.toUpperCase();
+    head.appendChild(sp);
+  }
+
+  const rows = $('g-rows');
+  rows.innerHTML = '';
+  for (const person of TBL.persons) {
+    const row = document.createElement('div');
+    row.className = 'trow';
+    const lab = document.createElement('div');
+    lab.className = 'tlabel';
+    lab.textContent = person.label;
+    row.appendChild(lab);
+    for (const col of t.columns) {
+      const k = cellKey(person.key, col);
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      const placed = game.placed[k];
+      if (placed) { slot.classList.add('filled'); slot.textContent = placed.form; }
+      if (game.locked[k]) slot.classList.add('ok');
+      else if (game.wrongSet && game.wrongSet[k]) slot.classList.add('bad');
+      if (game.sel && game.sel.col === col && !game.locked[k]) slot.classList.add('sel');
+      slot.onclick = () => tapSlot(person.key, col);
+      row.appendChild(slot);
+    }
+    rows.appendChild(row);
+  }
+
+  const tray = $('g-tray');
+  tray.innerHTML = '';
+  const used = new Set(Object.values(game.placed).map(p => p.col + ':' + p.form));
+  for (const tile of game.tiles) {
+    const el = document.createElement('div');
+    el.className = 'tile';
+    el.textContent = tile.form;
+    if (used.has(tile.col + ':' + tile.form)) { el.classList.add('gone'); }
+    if (game.sel === tile) el.classList.add('sel');
+    el.onclick = () => { game.sel = (game.sel === tile ? null : tile); renderGrid(); };
+    tray.appendChild(el);
+  }
+
+  const filled = Object.keys(game.placed).length;
+  $('g-foot').textContent = game.msg ||
+      (filled + ' of ' + game.total + ' placed');
+  $('g-check').disabled = filled < game.total;
+  $('g-check').style.opacity = filled < game.total ? 0.45 : 1;
+}
+
+function tapSlot(person, col) {
+  const k = cellKey(person, col);
+  if (game.locked[k]) return;
+  if (game.placed[k] && !game.sel) {          // tap a filled slot to take it back
+    delete game.placed[k];
+  } else if (game.sel) {
+    if (game.sel.col !== col) { game.msg = 'that tile belongs in the other column';
+                                renderGrid(); return; }
+    game.placed[k] = game.sel;
+    game.sel = null;
+  }
+  game.msg = null;
+  if (game.wrongSet) game.wrongSet[k] = false;
+  renderGrid();
+}
+
+function checkGrid() {
+  const t = game.table;
+  const first = game.attempt === 0;
+  game.attempt++;
+  game.wrongSet = {};
+  let wrongCount = 0;
+
+  for (const col of t.columns) {
+    const par = paradigm(col);
+    for (const person of TBL.persons) {
+      const k = cellKey(person.key, col);
+      if (game.locked[k]) continue;
+      const want = par.cells[person.key];
+      const got = game.placed[k];
+      const ok = got && got.form === want.form;
+      if (ok) {
+        game.locked[k] = true;
+        if (first) game.firstTry++;
+      } else {
+        game.wrongSet[k] = true;
+        wrongCount++;
+        delete game.placed[k];
+      }
+      // Only the first pass is a genuine test, so only it counts as a review.
+      if (first) {
+        const card = cards.find(c => c.id === want.cardId);
+        if (card) commitLocal(card, !!ok);
+      }
+    }
+  }
+
+  if (navigator.vibrate) navigator.vibrate(wrongCount ? [30, 40, 30] : 12);
+
+  if (wrongCount === 0) {
+    game.msg = null;
+    const pct = Math.round(100 * game.firstTry / game.total);
+    $('done-line').textContent = 'Grid complete — ' + game.firstTry + '/' +
+        game.total + ' first try';
+    $('done-sub').textContent = pct === 100
+        ? 'perfect, the whole paradigm'
+        : 'the misses are back in your queue for today';
+    show('done');
+    flushReviews();
+    return;
+  }
+  game.msg = wrongCount + (wrongCount === 1 ? ' is' : ' are') +
+             ' wrong — try those again';
+  renderGrid();
 }
 
 /* ------------------------------- push ----------------------------------- */

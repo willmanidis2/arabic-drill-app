@@ -89,6 +89,11 @@
   #g-foot{color:var(--muted);font-size:13px;text-align:center;min-height:18px;
           margin-bottom:9px}
   #tables{overflow-y:auto}
+  /* four columns will not fit a phone at the default size */
+  .narrow .tlabel{width:56px;font-size:11px}
+  .narrow .slot{font-size:12.5px;min-height:38px;border-radius:8px}
+  .narrow.thead{margin-left:62px}
+  .narrow .gtile{font-size:13.5px;padding:8px 10px}
   .mwrap{display:flex;gap:10px;flex:1;min-height:0}
   .mcol{flex:1;display:flex;flex-direction:column;gap:8px}
   .mcard{flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;
@@ -641,6 +646,10 @@ function renderGrid() {
   $('g-title').textContent = t.title;
   $('g-sub').textContent = t.subtitle;
 
+  const narrow = t.columns.length >= 4;
+  $('g-head').className = 'thead' + (narrow ? ' narrow' : '');
+  $('g-rows').className = narrow ? 'narrow' : '';
+  $('g-tray').className = 'tray' + (narrow ? ' narrow' : '');
   const head = $('g-head');
   head.innerHTML = '';
   for (const col of t.columns) {

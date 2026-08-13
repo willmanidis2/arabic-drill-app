@@ -73,8 +73,11 @@
   .slot.sel{border-color:var(--blue)}
   .slot.ok{border-color:var(--green);color:var(--green);background:transparent}
   .slot.bad{border-color:var(--red);color:var(--red)}
-  .tray{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;
-        padding-top:14px;border-top:1px solid var(--line)}
+  .tray{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .trayhead{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--dim);
+            margin:11px 0 6px}
+  .trayhead:first-child{margin-top:0}
+  .trayrow{display:flex;flex-wrap:wrap;gap:7px}
   .gtile{background:var(--row);border:1px solid var(--line);border-radius:10px;
         padding:10px 13px;font-size:15px}
   .gtile.sel{border-color:var(--blue);color:var(--blue)}
@@ -551,7 +554,9 @@ async function runCapstone(after) {
     }
   } catch (e) { /* offline -- the coda is optional, the session is not */ }
   if (!TBL) { return after ? after() : sessionDone(null); }
-  startMatch(capstonePick(), { after: after, gradeOnlyDue: true });
+  const pick = capstonePick();
+  if (!pick) return after ? after() : sessionDone(null);
+  startMatch(pick.gid, pick.i, { after: after, gradeOnlyDue: true });
 }
 
 /* ---------------------------- table game --------------------------------- */
@@ -590,37 +595,29 @@ async function openTables() {
     box.appendChild(b);
   };
 
-  heading('FILL THE GRID  \u00b7  build the system');
-  for (const t of TBL.tables) entry(t.title, t.subtitle, () => startTable(t.id));
-
-  heading('MATCHING  \u00b7  both sides shuffled, no positional crutch');
-  MATCHES.forEach((m, i) => entry(m.title, m.note, () => startMatch(i)));
-
+  for (const g of TBL.groups) {
+    heading(g.title.toUpperCase() + '  \u00b7  FILL THE GRID');
+    for (const t of g.tables) entry(t.title, t.subtitle, () => startTable(g.id, t.id));
+    heading(g.title.toUpperCase() + '  \u00b7  MATCHING  \u00b7  both sides shuffled');
+    g.matches.forEach((m, i) => entry(m.title, m.note, () => startMatch(g.id, i)));
+  }
   show('tables');
 }
 
-/* Matching pairs. The grid keeps persons in canonical order, which means it can
-   be partly solved by position; here BOTH columns are shuffled every round, so
-   the only way through is the mapping itself. */
-const MATCHES = [
-  { left: 'person', right: 'pron',   title: 'Person \u2194 pronoun',
-    note: 'I \u2194 ana' },
-  { left: 'person', right: 'ending', title: 'Person \u2194 ending',
-    note: 'I \u2194 -i' },
-  { left: 'pron',   right: 'ending', title: 'Pronoun \u2194 ending',
-    note: 'ana \u2194 -i, no English at all' },
-  { left: 'person', right: 'book',   title: 'Person \u2194 \u201c\u2026 book\u201d',
-    note: 'I \u2194 ktaabi' },
-];
 
-function paradigm(key) { return TBL.paradigms.find(p => p.key === key); }
+let GRP = null;   // the paradigm group currently being drilled
 
-function startTable(id) {
-  const t = TBL.tables.find(x => x.id === id);
+function group(id) { return TBL.groups.find(g => g.id === id); }
+function paradigm(key, g) { return (g || GRP).paradigms.find(p => p.key === key); }
+function rowsOf(g) { return (g || GRP).rows; }
+
+function startTable(gid, id) {
+  GRP = group(gid);
+  const t = GRP.tables.find(x => x.id === id);
   const tiles = [];
   for (const col of t.columns) {
     const par = paradigm(col);
-    for (const person of TBL.persons) {
+    for (const person of rowsOf(GRP)) {
       const cell = par.cells[person.key];
       tiles.push({ col, person: person.key, form: cell.form, cardId: cell.cardId });
     }
@@ -654,7 +651,7 @@ function renderGrid() {
 
   const rows = $('g-rows');
   rows.innerHTML = '';
-  for (const person of TBL.persons) {
+  for (const person of rowsOf(GRP)) {
     const row = document.createElement('div');
     row.className = 'trow';
     const lab = document.createElement('div');
@@ -676,17 +673,33 @@ function renderGrid() {
     rows.appendChild(row);
   }
 
+  // Group the tray by column. Two columns can legitimately hold the SAME string
+  // (Saudi: country and feminine nisba are both "s3uudiyyih"), and a flat tray
+  // makes those tiles indistinguishable -- you would tap one, be told it belongs
+  // in the other column, and have no way to tell which was which.
   const tray = $('g-tray');
   tray.innerHTML = '';
   const used = new Set(Object.values(game.placed).map(p => p.col + ':' + p.form));
-  for (const tile of game.tiles) {
-    const el = document.createElement('div');
-    el.className = 'gtile';
-    el.textContent = tile.form;
-    if (used.has(tile.col + ':' + tile.form)) { el.classList.add('gone'); }
-    if (game.sel === tile) el.classList.add('sel');
-    el.onclick = () => { game.sel = (game.sel === tile ? null : tile); renderGrid(); };
-    tray.appendChild(el);
+  const multi = t.columns.length > 1;
+  for (const col of t.columns) {
+    if (multi) {
+      const h = document.createElement('div');
+      h.className = 'trayhead';
+      h.textContent = paradigm(col).label;
+      tray.appendChild(h);
+    }
+    const strip = document.createElement('div');
+    strip.className = 'trayrow';
+    for (const tile of game.tiles.filter(x => x.col === col)) {
+      const el = document.createElement('div');
+      el.className = 'gtile';
+      el.textContent = tile.form;
+      if (used.has(tile.col + ':' + tile.form)) el.classList.add('gone');
+      if (game.sel === tile) el.classList.add('sel');
+      el.onclick = () => { game.sel = (game.sel === tile ? null : tile); renderGrid(); };
+      strip.appendChild(el);
+    }
+    tray.appendChild(strip);
   }
 
   const filled = Object.keys(game.placed).length;
@@ -721,7 +734,7 @@ function checkGrid() {
 
   for (const col of t.columns) {
     const par = paradigm(col);
-    for (const person of TBL.persons) {
+    for (const person of rowsOf(GRP)) {
       const k = cellKey(person.key, col);
       if (game.locked[k]) continue;
       const want = par.cells[person.key];
@@ -768,22 +781,29 @@ function checkGrid() {
    more were fumbled drops back a step, so you cannot get stranded above your
    level. The ladder is shared across all four pairings -- it tracks how much
    of the paradigm you know, not how well you know one presentation of it. */
-const LADDER = [2, 4, 8];
-const LVL_KEY = 'paradigm:level';
-const CLEAN_KEY = 'paradigm:clean';
-
-function levelIdx() {
-  const n = Number(localStorage.getItem(LVL_KEY) || 0);
-  return Math.min(Math.max(n, 0), LADDER.length - 1);
+// Steps of two, four, eight, then whatever is left -- so a ten-row table gets
+// a final rung the eight-row one does not need. Each group climbs separately.
+function ladderFor(g) {
+  const n = rowsOf(g).length;
+  const steps = [2, 4, 8, n].filter(x => x <= n);
+  return steps.filter((x, i) => steps.indexOf(x) === i);
 }
-function personsInPlay() {
-  return TBL.persons.slice(0, Math.min(LADDER[levelIdx()], TBL.persons.length));
+const lvlKey   = g => 'paradigm:level:' + (g || GRP).id;
+const cleanKey = g => 'paradigm:clean:' + (g || GRP).id;
+
+function levelIdx(g) {
+  const n = Number(localStorage.getItem(lvlKey(g)) || 0);
+  return Math.min(Math.max(n, 0), ladderFor(g || GRP).length - 1);
+}
+function rowsInPlay(g) {
+  g = g || GRP;
+  return rowsOf(g).slice(0, ladderFor(g)[levelIdx(g)]);
 }
 function ladderNote() {
-  const size = personsInPlay().length;
-  if (size >= TBL.persons.length) return 'all ' + size;
-  const need = 2 - Number(localStorage.getItem(CLEAN_KEY) || 0);
-  return size + ' of ' + TBL.persons.length + '  ·  ' +
+  const size = rowsInPlay().length, all = rowsOf(GRP).length;
+  if (size >= all) return 'all ' + size;
+  const need = 2 - Number(localStorage.getItem(cleanKey()) || 0);
+  return size + ' of ' + all + '  ·  ' +
          need + ' clean round' + (need === 1 ? '' : 's') + ' to unlock more';
 }
 
@@ -792,17 +812,22 @@ function ladderNote() {
    rotation. Ties rotate, so the same pairing does not repeat back to back. */
 function capstonePick() {
   const nowIso = SRS.iso(new Date());
-  const dueIn = m => personsInPlay().reduce((n, p) => {
-    const cid = sideCard(m.right, p.key) || sideCard(m.left, p.key);
-    return n + (cid && SRS.entryFor(state, cid).due <= nowIso ? 1 : 0);
-  }, 0);
-  const scored = MATCHES.map((m, i) => ({ i, n: dueIn(m) }));
+  const scored = [];
+  for (const g of TBL.groups) {
+    g.matches.forEach((m, i) => {
+      const n = rowsInPlay(g).reduce((acc, r) => {
+        const cid = sideCard(m.right, r.key, g) || sideCard(m.left, r.key, g);
+        return acc + (cid && SRS.entryFor(state, cid).due <= nowIso ? 1 : 0);
+      }, 0);
+      scored.push({ id: g.id + '/' + i, gid: g.id, i: i, n: n });
+    });
+  }
+  if (!scored.length) return null;
   const best = Math.max.apply(null, scored.map(s => s.n));
-  const pool = scored.filter(s => s.n === best).map(s => s.i);
-  const last = Number(localStorage.getItem('capstoneN'));
-  const next = pool.find(i => i !== last);
-  const pick = next === undefined ? pool[0] : next;
-  localStorage.setItem('capstoneN', String(pick));
+  const pool = scored.filter(s => s.n === best);
+  const last = localStorage.getItem('capstoneN');
+  const pick = pool.find(s => s.id !== last) || pool[0];
+  localStorage.setItem('capstoneN', pick.id);
   return pick;
 }
 
@@ -811,12 +836,12 @@ function capstonePick() {
 let mgame = null;
 let mtimer = null;
 
-function sideText(which, personKey) {
-  if (which === 'person') return TBL.persons.find(p => p.key === personKey).label;
-  return paradigm(which).cells[personKey].form;
+function sideText(which, rowKey, g) {
+  if (which === 'row') return rowsOf(g).find(r => r.key === rowKey).label;
+  return paradigm(which, g).cells[rowKey].form;
 }
-function sideCard(which, personKey) {
-  return which === 'person' ? null : paradigm(which).cells[personKey].cardId;
+function sideCard(which, rowKey, g) {
+  return which === 'row' ? null : paradigm(which, g).cells[rowKey].cardId;
 }
 function shuffled(arr) {
   const a = arr.slice();
@@ -827,14 +852,15 @@ function shuffled(arr) {
   return a;
 }
 
-function startMatch(i, opts) {
+function startMatch(gid, i, opts) {
   opts = opts || {};
-  const m = MATCHES[i];
-  const keys = personsInPlay().map(p => p.key);
+  GRP = group(gid);
+  const m = GRP.matches[i];
+  const keys = rowsInPlay().map(r => r.key);
   mgame = {
-    m,
-    left:  shuffled(keys.map(k => ({ key: k, text: sideText(m.left, k) }))),
-    right: shuffled(keys.map(k => ({ key: k, text: sideText(m.right, k) }))),
+    m: m, gid: gid,
+    left:  shuffled(keys.map(k => ({ key: k, text: sideText(m.left, k, GRP) }))),
+    right: shuffled(keys.map(k => ({ key: k, text: sideText(m.right, k, GRP) }))),
     sel: null, done: new Set(), missed: new Set(), graded: new Set(),
     total: keys.length, started: Date.now(), busy: false,
     after: opts.after || null,
@@ -903,7 +929,7 @@ function tapMatch(side, key) {
     // Grade once per pair, and only as correct if it was never fumbled.
     if (!mgame.graded.has(key)) {
       mgame.graded.add(key);
-      const cid = sideCard(mgame.m.right, key) || sideCard(mgame.m.left, key);
+      const cid = sideCard(mgame.m.right, key, GRP) || sideCard(mgame.m.left, key, GRP);
       const card = cid && cards.find(c => c.id === cid);
       // A capstone runs after EVERY set, so grading it unconditionally would
       // review these 16 cards far more often than the rest of the deck and
@@ -940,22 +966,22 @@ function finishMatch() {
   const fumbles = mgame.missed.size, size = mgame.total;
 
   let moved = null;
-  const lvl = levelIdx();
+  const lvl = levelIdx(), top = ladderFor(GRP).length - 1;
   if (fumbles === 0) {
-    const streak = Number(localStorage.getItem(CLEAN_KEY) || 0) + 1;
-    if (streak >= 2 && lvl < LADDER.length - 1) {
-      localStorage.setItem(LVL_KEY, String(lvl + 1));
-      localStorage.setItem(CLEAN_KEY, '0');
+    const streak = Number(localStorage.getItem(cleanKey()) || 0) + 1;
+    if (streak >= 2 && lvl < top) {
+      localStorage.setItem(lvlKey(), String(lvl + 1));
+      localStorage.setItem(cleanKey(), '0');
       moved = 'up';
     } else {
-      localStorage.setItem(CLEAN_KEY, String(streak));
+      localStorage.setItem(cleanKey(), String(streak));
     }
   } else {
-    localStorage.setItem(CLEAN_KEY, '0');
+    localStorage.setItem(cleanKey(), '0');
     // half the round fumbled means this step is above you -- step back down
     // rather than leaving you to fail the same wall repeatedly.
     if (fumbles * 2 >= size && lvl > 0) {
-      localStorage.setItem(LVL_KEY, String(lvl - 1));
+      localStorage.setItem(lvlKey(), String(lvl - 1));
       moved = 'down';
     }
   }
@@ -964,9 +990,9 @@ function finishMatch() {
   flushReviews();
 
   const ladderMsg = moved === 'up'
-      ? 'Unlocked \u2014 now ' + LADDER[levelIdx()] + ' of ' + TBL.persons.length
+      ? 'Unlocked \u2014 now ' + rowsInPlay().length + ' of ' + rowsOf(GRP).length
       : moved === 'down'
-        ? 'Back to ' + LADDER[levelIdx()] + ' for a bit'
+        ? 'Back to ' + rowsInPlay().length + ' for a bit'
         : null;
 
   if (after) { after(); return; }              // crank: straight into the next set
